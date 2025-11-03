@@ -7,8 +7,11 @@ Details about the Global Shoreline Change datasets can be find in Luijendijk et 
 To access the data, you will now need a Shared Access Signature (SAS) token. Tokens are available upon reasonable request from Deltares.
 
 ### Installation
-For accessing the data, we use CoastPY 
+For accessing the data we use the [Coastpy](https://github.com/TUDelft-CITG/coastpy) package. To get an easy start we suggest to install this environment. 
 
+```python
+conda env create -f shorelinemonitor.yaml
+```
 ### Contributing
 Interested in contributing? Please reach out to us and checkout the contributing guidelines.
 
