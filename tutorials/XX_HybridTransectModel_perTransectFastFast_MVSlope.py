@@ -1,19 +1,22 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Thu Feb 10 11:23:10 2022
+#!/usr/bin/env geo_env2
 
-@author: hulskamp
-"""
+# -*- coding: utf-8 -*-
+# Copyright notice
+#   --------------------------------------------------------------------
+#   Copyright (C) 2025 Deltares (30-03-2022)
+#     Created by Romy Hulskamp
+#     Modified by Etienne Kras (etienne.kras@deltares.nl)
+#   --------------------------------------------------------------------
 
 import numpy as np
 from shapely.geometry import Polygon, LineString
+import matplotlib.pyplot as plt
 import datetime
 import os.path
 import json
 import time
 import pandas as pd
 import os
-import time
 import math
 import csv
 import statistics
@@ -21,29 +24,38 @@ import sklearn
 from sklearn.ensemble import RandomForestClassifier
 from geojson import MultiPoint, Feature, FeatureCollection, dump, LineString
 import warnings
+import cartopy.io.img_tiles as cimgt
+import contextily as ctx
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 pd.options.mode.chained_assignment = None
 import ee
 
-ee.Initialize()
+# GEE specific packages
+project = "shorelines-11208011-022"
+
+try:
+    ee.Initialize(project=project)
+except Exception as e:
+    ee.Authenticate()
+    ee.Initialize(project=project)
 
 # get filename
 folder = (
     r"P:\1000545-054-globalbeaches\07_Muddy_Coasts\Paper Final Scripts and Data\Scripts"
 )
-results = (
-    r"P:\1000545-054-globalbeaches\07_Muddy_Coasts\Paper Final Scripts and Data\Results"
-)
-scriptname = "HybridTransectModel_perTransectFastFast"
+results = r"p:\1000545-054-globalbeaches\19_Muddy_Slopes\Results"
+figures = r"p:\1000545-054-globalbeaches\19_Muddy_Slopes\Figures"
+scriptname = "XX_HybridTransectModel_perTransectFastFast_MVSlope"
 # outputfolder
 os.chdir(folder)
 if not os.path.exists(os.path.join(results, scriptname)):
     os.mkdir(os.path.join(results, scriptname))
+    os.mkdir(os.path.join(figures, scriptname))
 
 # %% define collection and bands
 collection = "IM_S2"
-collection_name = {"IM_S2": "COPERNICUS/S2"}
+collection_name = {"IM_S2": "COPERNICUS/S2_HARMONIZED"}
 band_names = {
     "IM_S2": [
         "B1",
@@ -191,10 +203,11 @@ classifier_hybrid = rfc_hybrid.fit(tt_norm, tt_label)
 
 # %% Load global transects to classify
 global_transects = pd.read_csv(
-    r"P:\1000545-054-globalbeaches\07_Muddy_Coasts\Paper Final Scripts and Data\Data\GlobalTransectsForClassification.csv",
+    r"p:\1000545-054-globalbeaches\19_Muddy_Slopes\Data\GlobalMVTransectsForClassification_incSM.csv",
     delimiter=",",
 )
-global_transects = global_transects.drop(columns=["Unnamed: 0", "Unnamed: 0.1"])
+# global_transects = global_transects.drop(columns=["Unnamed: 0", "Unnamed: 0.1"])
+global_transects = global_transects.drop(columns=["index"])
 
 # Add box_ids
 boxes = []
@@ -209,6 +222,10 @@ box_unique = pd.DataFrame(np.unique(boxes))
 box_shuffle = box_unique.sample(frac=1, random_state=1).reset_index(
     drop=True
 )  # shuffled order
+
+# choosebox = ["BOX_117_039"]  # suriname: transects set t in line 151 -> range(0,5)
+# # choosebox = ["BOX_079_005"]  # madagascar: transects set t in line 151 -> range(20,25)
+# box_shuffle = pd.DataFrame(choosebox)
 
 
 # %% definitions
@@ -291,6 +308,9 @@ for box in range(len(box_shuffle)):
                 "mllw",
                 "tidal range",
                 "prediction",
+                "dem profile",
+                "veg_slope",
+                "mud_slope",
             ]
         ] = None
         transect_df["abs lat"] = abs(transect_df["Center_lat"])
@@ -299,9 +319,9 @@ for box in range(len(box_shuffle)):
 
         begin = time.time()
 
-        ### per box
+        ### per box; additional variables
 
-        batch = 250  # set maximum batch size (max 300 transects at once)
+        batch = 250  # set maximum batch size (max 250 transects at once)
         for r in range(0, len(transect_df), batch):
             if r + batch > len(transect_df):
                 last = len(transect_df)
@@ -394,9 +414,10 @@ for box in range(len(box_shuffle)):
             for t in range(len(transect_points_box)):
                 dem_sample_info = pd.DataFrame(
                     {"dem": dem_sample_info_T[t * 151 : t * 151 + 151]}
-                ).replace({-999: np.NaN})
+                ).replace({-999: np.nan})
                 transect_df["height max"][r + t] = np.max(dem_sample_info["dem"])
                 transect_df["height var"][r + t] = np.var(dem_sample_info["dem"])
+                transect_df["dem profile"][r + t] = dem_sample_info["dem"].tolist()
 
                 mangrove_sample_info = pd.DataFrame(
                     {"mangrove": mangrove_sample_info_T[t * 151 : t * 151 + 151]}
@@ -430,11 +451,11 @@ for box in range(len(box_shuffle)):
                         gsw90.append(gsw90value)
                 transect_df["gsw"][r + t] = len(gsw90) * dist_steps
 
-        ### per batch
+        ### per batch, image classification
 
         try:
 
-            batch = 100  # set maximum batch size (max 100 transects at once)
+            batch = 50  # set maximum batch size (max 100 transects at once)
             for r in range(0, len(transect_df), batch):
                 if r + batch > len(transect_df):
                     last = len(transect_df)
@@ -533,7 +554,73 @@ for box in range(len(box_shuffle)):
                     else:
                         transect_df["dry"][r + t] = 0
 
+                    # sample along transect for slope
+
+                    # get information in correct formats
+                    class_profile = class_sample_info
+                    dem_profile = pd.DataFrame(
+                        transect_df["dem profile"][r + t], columns=["dem"]
+                    )
+                    dem_profile = dem_profile.replace({np.nan: 0})
+
+                    # find land-sea point (approx. MSL = 0 m elevation, SDS point is too noisy / variable to use in this analysis + often without elevation + other transect length SMonitor & Romy analysis)
+                    elev_gz = [
+                        idx
+                        for idx in range(len(dem_profile) - 1)
+                        if dem_profile["dem"][idx] > 0
+                    ]  # neglects 0 or negative elevations (bathy, which would be artifacts)
+                    if len(elev_gz) > 0:
+                        land_sea_idx = np.max(elev_gz)  # max idx with still elevation
+                        # land_sea_elev = dem_profile["dem"][land_sea_idx]
+                        class_profile_red = class_profile.iloc[
+                            0 : land_sea_idx + 1
+                        ]  # reduce class profile from 0 (land) to land-sea point
+
+                        # find the start and end indices of the vegetation and mud class, determine the elevations and calculate the slopes
+                        veg_indices = class_profile_red.index[
+                            (class_profile_red["class"] == 4)
+                            | (class_profile_red["class"] == 7)
+                        ].tolist()  # assumes unbroken blob
+                        mud_indices = class_profile_red.index[
+                            class_profile_red["class"] == 2
+                        ].tolist()  # assumes unbroken blob
+                        if (
+                            len(veg_indices) > 1
+                        ):  # if no or only one veg point, slope cannot be calculated
+                            veg_start_idx = veg_indices[0]
+                            veg_start_elv = dem_profile["dem"][
+                                veg_start_idx
+                            ]  # most landward veg point
+                            veg_end_idx = veg_indices[-1]
+                            veg_end_elv = dem_profile["dem"][
+                                veg_end_idx
+                            ]  # most seaward veg point
+                            # slope
+                            veg_slope = abs(
+                                (veg_start_elv - veg_end_elv)
+                                / ((veg_end_idx - veg_start_idx) * dist_steps)
+                            )  # assumes always positive
+                            transect_df["veg_slope"][r + t] = veg_slope
+                        if (
+                            len(mud_indices) > 1
+                        ):  # if no or only one mud point, slope cannot be calculated
+                            mud_start_idx = mud_indices[0]
+                            mud_start_elv = dem_profile["dem"][
+                                mud_start_idx
+                            ]  # most landward mud point
+                            mud_end_idx = mud_indices[-1]
+                            mud_end_elv = dem_profile["dem"][
+                                mud_end_idx
+                            ]  # most seaward mud point
+                            # slope
+                            mud_slope = abs(
+                                (mud_start_elv - mud_end_elv)
+                                / ((mud_end_idx - mud_start_idx) * dist_steps)
+                            )
+                            transect_df["mud_slope"][r + t] = mud_slope
+
             ### end batch
+            transect_df.drop(["dem profile"], axis=1, inplace=True)
 
             ### classify transects per box
             td_tot = transect_df.loc[:, features]
@@ -585,6 +672,8 @@ for box in range(len(box_shuffle)):
                             "maxtemp": str(transect_df["maxtemp"][n]),
                             "mintemp": str(transect_df["mintemp"][n]),
                             "tidal range": str(transect_df["tidal range"][n]),
+                            "veg_slope": str(transect_df["veg_slope"][n]),
+                            "mud_slope": str(transect_df["mud_slope"][n]),
                         },
                     )
                 )
