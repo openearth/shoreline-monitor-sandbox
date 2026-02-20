@@ -13,6 +13,7 @@
 import os
 import pandas as pd
 import numpy as np
+import re
 
 # paths
 results = r"p:\1000545-054-globalbeaches\19_Muddy_Slopes\Results"
@@ -53,6 +54,7 @@ print("Number of processed boxes: %s of %s" % (len(all_files), len(box_unique)))
 
 # make one large df and check progress w.r.t. processed transects
 all_transects = pd.DataFrame()
+non_processed_boxes = []
 for box in range(len(box_shuffle)):
     if box_shuffle[0][box] + "_ClassifiedTransects2020.csv" in all_files:
         transect_df = pd.read_csv(
@@ -68,6 +70,8 @@ for box in range(len(box_shuffle)):
         last_proc_box_name = box_shuffle[0][box]
         # print("Length transect df (%s): %s" % (last_proc_box_name, len(transect_df)))
         all_transects = pd.concat([all_transects, transect_df], ignore_index=True)
+    if box_shuffle[0][box] + "_ClassifiedTransects2020.csv" not in all_files:
+        non_processed_boxes.append(box_shuffle[0][box])
 
 print("Length last processed box (%s): %s" % (last_proc_box_name, len(transect_df)))
 print(
@@ -77,12 +81,27 @@ print(
 
 all_transects = all_transects.drop(columns=["Unnamed: 0"])
 
+
+# sort data on transect id
+def natural_key(s):
+    return [int(text) if text.isdigit() else text for text in re.split(r"(\d+)", s)]
+
+
+all_transects = all_transects.sort_values(
+    by="transect_id", key=lambda x: x.map(natural_key)
+).reset_index(drop=True)
+
+# force the prediction values from the global_transects dataset (input) on all_transects (output) with matching transect_id (there appears to be a mismatch in prediction due to batch size compute)
+all_transects["prediction"] = all_transects["transect_id"].map(
+    global_transects.set_index("transect_id")["prediction"]
+)
+
 # store as CSV
 all_transects.to_csv(
     os.path.join(
         results,
         scriptname,
-        "Partly_Processed_Transects_MVSlope_V2.csv",
+        "Complete_Processed_Transects_MVSlope_V1.csv",
     ),
     index=False,
 )
@@ -92,6 +111,6 @@ all_transects.to_csv(
 store_fol = os.path.join(
     r"p:\1000545-054-globalbeaches\19_Muddy_Slopes\Results", scriptname
 )
-df_name = "Partly_Processed_Transects_MVSlope_V2.csv"
+df_name = "Complete_Processed_Transects_MVSlope_V1.csv"
 
 df = pd.read_csv(os.path.join(store_fol, df_name))

@@ -378,7 +378,9 @@ for box in range(len(box_shuffle)):
                 "classification"
             ).getInfo()
 
-            GSW = ee.Image("JRC/GSW1_3/GlobalSurfaceWater").select("occurrence")
+            GSW = ee.Image("JRC/GSW1_3/GlobalSurfaceWater").select(
+                "occurrence"
+            )  # TODO: replace with GSW1_4 later
             GSW_sample = GSW.unmask(-999, False).sampleRegions(
                 transect_feat_box, ["id"], scale
             )
@@ -390,8 +392,12 @@ for box in range(len(box_shuffle)):
             pts = centers.map(lambda i: get_nearest_value(i, temp.select("bio06")))
             mintemp_mean = np.array(pts.aggregate_array("bio06").getInfo()) * 0.1
 
-            transect_df["maxtemp"][r:last] = maxtemp_mean
-            transect_df["mintemp"][r:last] = mintemp_mean
+            transect_df.loc[r : last - 1, "maxtemp"] = (
+                maxtemp_mean  # transect_df["maxtemp"][r:last] = maxtemp_mean
+            )
+            transect_df.loc[r : last - 1, "mintemp"] = (
+                mintemp_mean  # transect_df["mintemp"][r:last] = mintemp_mean
+            )
 
             tidal = ee.Image("projects/dgds-gee/gtsm/tidal_indicators")
             pts = centers.map(
@@ -405,19 +411,30 @@ for box in range(len(box_shuffle)):
             )
             mllw_mean = pts.aggregate_array("mean_lower_low_water").getInfo()
 
-            transect_df["mhhw"][r:last] = mhhw_mean
-            transect_df["mllw"][r:last] = mllw_mean
-            transect_df["tidal range"][r:last] = (
-                transect_df["mhhw"][r:last] - transect_df["mllw"][r:last]
+            transect_df.loc[r : last - 1, "mhhw"] = (
+                mhhw_mean  # transect_df["mhhw"][r:last] = mhhw_mean
+            )
+            transect_df.loc[r : last - 1, "mllw"] = (
+                mllw_mean  # transect_df["mllw"][r:last] = mllw_mean
+            )
+            transect_df.loc[r : last - 1, "tidal range"] = (
+                transect_df.loc[r : last - 1, "mhhw"]
+                - transect_df.loc[r : last - 1, "mllw"]
             )
 
             for t in range(len(transect_points_box)):
                 dem_sample_info = pd.DataFrame(
                     {"dem": dem_sample_info_T[t * 151 : t * 151 + 151]}
                 ).replace({-999: np.nan})
-                transect_df["height max"][r + t] = np.max(dem_sample_info["dem"])
-                transect_df["height var"][r + t] = np.var(dem_sample_info["dem"])
-                transect_df["dem profile"][r + t] = dem_sample_info["dem"].tolist()
+                transect_df.loc[r + t, "height max"] = np.max(
+                    dem_sample_info["dem"]
+                )  # transect_df["height max"][r + t] = np.max(dem_sample_info["dem"])
+                transect_df.loc[r + t, "height var"] = np.var(
+                    dem_sample_info["dem"]
+                )  # transect_df["height var"][r + t] = np.var(dem_sample_info["dem"])
+                transect_df.at[r + t, "dem profile"] = dem_sample_info[
+                    "dem"
+                ].tolist()  # transect_df["dem profile"][r + t] = dem_sample_info["dem"].tolist()
 
                 mangrove_sample_info = pd.DataFrame(
                     {"mangrove": mangrove_sample_info_T[t * 151 : t * 151 + 151]}
@@ -426,9 +443,13 @@ for box in range(len(box_shuffle)):
                     "mangrove"
                 ].value_counts()  # if one point contains mangrove (1), then mangroves occur
                 if mangrove_sample_info["mangrove"].isin([1]).any().any():
-                    transect_df["mangrove"][r + t] = 1
+                    transect_df.loc[r + t, "mangrove"] = (
+                        1  # transect_df["mangrove"][r + t] = 1
+                    )
                 else:
-                    transect_df["mangrove"][r + t] = 0
+                    transect_df.loc[r + t, "mangrove"] = (
+                        0  # transect_df["mangrove"][r + t] = 0
+                    )
 
                 intertidal_sample_info = pd.DataFrame(
                     {"intertidal": intertidal_sample_info_T[t * 151 : t * 151 + 151]}
@@ -437,9 +458,13 @@ for box in range(len(box_shuffle)):
                     "intertidal"
                 ].value_counts()  # count points that contain intertidal flat (1)
                 if intertidal_sample_info["intertidal"].isin([1]).any().any():
-                    transect_df["intertidal"][r + t] = intertidal_count[1] * dist_steps
+                    transect_df.loc[r + t, "intertidal"] = (
+                        intertidal_count[1] * dist_steps
+                    )  # transect_df["intertidal"][r + t] = intertidal_count[1] * dist_steps
                 else:
-                    transect_df["intertidal"][r + t] = 0
+                    transect_df.loc[r + t, "intertidal"] = (
+                        0  # transect_df["intertidal"][r + t] = 0
+                    )
 
                 GSW_sample_info = pd.DataFrame(
                     {"gsw": GSW_sample_info_T[t * 151 : t * 151 + 151]}
@@ -449,13 +474,15 @@ for box in range(len(box_shuffle)):
                     if GSW_sample_info["gsw"][g] > 5 and GSW_sample_info["gsw"][g] < 95:
                         gsw90value = GSW_sample_info["gsw"][g]
                         gsw90.append(gsw90value)
-                transect_df["gsw"][r + t] = len(gsw90) * dist_steps
+                transect_df.loc[r + t, "gsw"] = (
+                    len(gsw90) * dist_steps
+                )  # transect_df["gsw"][r + t] = len(gsw90) * dist_steps
 
         ### per batch, image classification
 
         try:
 
-            batch = 50  # set maximum batch size (max 100 transects at once)
+            batch = 1  # set maximum batch size (max 100 transects at once)
             for r in range(0, len(transect_df), batch):
                 if r + batch > len(transect_df):
                     last = len(transect_df)
@@ -526,33 +553,61 @@ for box in range(len(box_shuffle)):
 
                     class_count = class_sample_info["class"].value_counts()
                     if class_sample_info["class"].isin([1]).any().any():
-                        transect_df["sand"][r + t] = class_count[1] * dist_steps
+                        transect_df.loc[r + t, "sand"] = (
+                            class_count[1] * dist_steps
+                        )  # transect_df["sand"][r + t] = class_count[1] * dist_steps
                     else:
-                        transect_df["sand"][r + t] = 0
+                        transect_df.loc[r + t, "sand"] = (
+                            0  # transect_df["sand"][r + t] = 0
+                        )
                     if class_sample_info["class"].isin([2]).any().any():
-                        transect_df["mud"][r + t] = class_count[2] * dist_steps
+                        transect_df.loc[r + t, "mud"] = (
+                            class_count[2] * dist_steps
+                        )  # transect_df["mud"][r + t] = class_count[2] * dist_steps
                     else:
-                        transect_df["mud"][r + t] = 0
+                        transect_df.loc[r + t, "mud"] = (
+                            0  # transect_df["mud"][r + t] = 0
+                        )
                     if class_sample_info["class"].isin([3]).any().any():
-                        transect_df["water"][r + t] = class_count[3] * dist_steps
+                        transect_df.loc[r + t, "water"] = (
+                            class_count[3] * dist_steps
+                        )  # transect_df["water"][r + t] = class_count[3] * dist_steps
                     else:
-                        transect_df["water"][r + t] = 0
+                        transect_df.loc[r + t, "water"] = (
+                            0  # transect_df["water"][r + t] = 0
+                        )
                     if class_sample_info["class"].isin([4]).any().any():
-                        transect_df["vegetation"][r + t] = class_count[4] * dist_steps
+                        transect_df.loc[r + t, "vegetation"] = (
+                            class_count[4] * dist_steps
+                        )  # transect_df["vegetation"][r + t] = class_count[4] * dist_steps
                     else:
-                        transect_df["vegetation"][r + t] = 0
+                        transect_df.loc[r + t, "vegetation"] = (
+                            0  # transect_df["vegetation"][r + t] = 0
+                        )
                     if class_sample_info["class"].isin([5]).any().any():
-                        transect_df["other"][r + t] = class_count[5] * dist_steps
+                        transect_df.loc[r + t, "other"] = (
+                            class_count[5] * dist_steps
+                        )  # transect_df["other"][r + t] = class_count[5] * dist_steps
                     else:
-                        transect_df["other"][r + t] = 0
+                        transect_df.loc[r + t, "other"] = (
+                            0  # transect_df["other"][r + t] = 0
+                        )
                     if class_sample_info["class"].isin([6]).any().any():
-                        transect_df["turbid"][r + t] = class_count[6] * dist_steps
+                        transect_df.loc[r + t, "turbid"] = (
+                            class_count[6] * dist_steps
+                        )  # transect_df["turbid"][r + t] = class_count[6] * dist_steps
                     else:
-                        transect_df["turbid"][r + t] = 0
+                        transect_df.loc[r + t, "turbid"] = (
+                            0  # transect_df["turbid"][r + t] = 0
+                        )
                     if class_sample_info["class"].isin([7]).any().any():
-                        transect_df["dry"][r + t] = class_count[7] * dist_steps
+                        transect_df.loc[r + t, "dry"] = (
+                            class_count[7] * dist_steps
+                        )  # transect_df["dry"][r + t] = class_count[7] * dist_steps
                     else:
-                        transect_df["dry"][r + t] = 0
+                        transect_df.loc[r + t, "dry"] = (
+                            0  # transect_df["dry"][r + t] = 0
+                        )
 
                     # sample along transect for slope
 
@@ -600,7 +655,10 @@ for box in range(len(box_shuffle)):
                                 (veg_start_elv - veg_end_elv)
                                 / ((veg_end_idx - veg_start_idx) * dist_steps)
                             )  # assumes always positive
-                            transect_df["veg_slope"][r + t] = veg_slope
+                            transect_df.loc[r + t, "veg_slope"] = (
+                                veg_slope  # transect_df["veg_slope"][r + t] = veg_slope
+                            )
+
                         if (
                             len(mud_indices) > 1
                         ):  # if no or only one mud point, slope cannot be calculated
@@ -617,7 +675,9 @@ for box in range(len(box_shuffle)):
                                 (mud_start_elv - mud_end_elv)
                                 / ((mud_end_idx - mud_start_idx) * dist_steps)
                             )
-                            transect_df["mud_slope"][r + t] = mud_slope
+                            transect_df.loc[r + t, "mud_slope"] = (
+                                mud_slope  # transect_df["mud_slope"][r + t] = mud_slope
+                            )
 
             ### end batch
             transect_df.drop(["dem profile"], axis=1, inplace=True)
