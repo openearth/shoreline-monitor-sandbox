@@ -101,7 +101,7 @@ all_transects.to_csv(
     os.path.join(
         results,
         scriptname,
-        "Complete_Processed_Transects_MVSlope_V1.csv",
+        "Complete_Processed_Transects_MVSlope.csv",
     ),
     index=False,
 )
@@ -111,6 +111,6 @@ all_transects.to_csv(
 store_fol = os.path.join(
     r"p:\1000545-054-globalbeaches\19_Muddy_Slopes\Results", scriptname
 )
-df_name = "Complete_Processed_Transects_MVSlope_V1.csv"
+df_name = "Complete_Processed_Transects_MVSlope.csv"
 
 df = pd.read_csv(os.path.join(store_fol, df_name))
